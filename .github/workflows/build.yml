@@ -350,65 +350,23 @@ jobs:
           EOF
 
           cat > files/etc/uci-defaults/99-default-settings <<'EOF'
-          # Generate wireless config only when one does not already exist.
+          # Generate wireless config if it does not exist yet.
           [ -s /etc/config/wireless ] || /sbin/wifi config
 
-          # Detect the internal MR3420 radio by its known hardware path.
-          # Do not assume radio0 is internal: USB enumeration can change numbering.
-          radios="$(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p')"
-          internal_radio=""
-          usb_radio=""
-          for radio in $radios; do
-            radio_path="$(uci -q get "wireless.$radio.path" 2>/dev/null)"
-            case "$radio_path" in
-              *18100000.wmac*) internal_radio="$radio" ;;
-              *1b000000.usb*|*/usb*) usb_radio="$radio" ;;
-            esac
+          # Enable the radio.
+          for radio in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+            uci -q set "wireless.$radio.disabled=0"
           done
 
-          # If the expected internal hardware path is not present, do not guess.
-          if [ -n "$internal_radio" ]; then
-            uci -q set "wireless.$internal_radio.disabled=0"
-
-            # Find an AP interface already attached to the internal radio.
-            internal_iface=""
-            ifaces="$(uci -q show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p')"
-            for iface in $ifaces; do
-              iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
-              if [ "$iface_device" = "$internal_radio" ]; then
-                internal_iface="$iface"
-                break
-              fi
-            done
-
-            # Create the default AP on the internal radio if none exists.
-            if [ -z "$internal_iface" ]; then
-              internal_iface="default_internal"
-              uci -q set "wireless.$internal_iface=wifi-iface"
-              uci -q set "wireless.$internal_iface.device=$internal_radio"
-              uci -q set "wireless.$internal_iface.network=lan"
-              uci -q set "wireless.$internal_iface.mode=ap"
-              uci -q set "wireless.$internal_iface.ssid=OpenWrt"
-              uci -q set "wireless.$internal_iface.encryption=none"
-            fi
-            uci -q set "wireless.$internal_iface.disabled=0"
-
-            # Remove any AP interface attached to USB; keep its radio and driver.
-            if [ -n "$usb_radio" ]; then
-              for iface in $ifaces; do
-                iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
-                if [ "$iface_device" = "$usb_radio" ]; then
-                  uci -q delete "wireless.$iface"
-                fi
-              done
-            fi
+          # Keep the existing/default AP enabled.
+          if uci -q get wireless.@wifi-iface[0].ssid >/dev/null 2>&1; then
+            uci -q set wireless.@wifi-iface[0].disabled='0'
           fi
 
           uci -q commit wireless
           exit 0
           EOF
           chmod 755 files/etc/uci-defaults/99-default-settings
-          sh -n files/etc/uci-defaults/99-default-settings
 
           # Leave the package's default OpenNDS configuration untouched.
           # Only stop the service and disable startup; OpenNDS defaults to br-lan.
@@ -420,62 +378,6 @@ jobs:
           exit 0
           EOF
           chmod 755 files/etc/uci-defaults/96-disable-opennds
-
-          
-          # Prepare Wi-Fi client uplink so an internal-radio STA can route internet to LAN.
-          # The STA interface must be assigned to network 'wwan' when configured in LuCI.
-          cat > files/etc/uci-defaults/97-configure-wwan <<'EOF'
-          # DHCP client for the upstream Wi-Fi network.
-          uci -q set network.wwan=interface
-          uci -q set network.wwan.proto=dhcp
-
-          # Add wwan to the existing WAN firewall zone, preserving Ethernet WAN.
-          wan_zone=""
-          zones="$(uci -q show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p')"
-          for zone in $zones; do
-            zone_name="$(uci -q get "firewall.$zone.name" 2>/dev/null)"
-            if [ "$zone_name" = "wan" ]; then
-              wan_zone="$zone"
-              break
-            fi
-          done
-
-          if [ -n "$wan_zone" ]; then
-            has_wwan=0
-            for net in $(uci -q get "firewall.$wan_zone.network" 2>/dev/null); do
-              [ "$net" = "wwan" ] && has_wwan=1
-            done
-            # UCI list options may be returned as multiple values; check the full config too.
-            if ! uci -q show firewall | grep -F "firewall.$wan_zone.network='wwan'" >/dev/null; then
-              uci -q add_list "firewall.$wan_zone.network=wwan"
-            fi
-            uci -q set "firewall.$wan_zone.masq=1"
-            uci -q set "firewall.$wan_zone.mtu_fix=1"
-          fi
-
-          # Ensure LAN is allowed to forward through the WAN zone.
-          has_lan_wan_forward=0
-          forwards="$(uci -q show firewall | sed -n 's/^firewall\.\([^.=]*\)=forwarding$/\1/p')"
-          for forward in $forwards; do
-            src="$(uci -q get "firewall.$forward.src" 2>/dev/null)"
-            dest="$(uci -q get "firewall.$forward.dest" 2>/dev/null)"
-            if [ "$src" = "lan" ] && [ "$dest" = "wan" ]; then
-              has_lan_wan_forward=1
-              break
-            fi
-          done
-          if [ "$has_lan_wan_forward" -eq 0 ]; then
-            uci -q set firewall.lan_to_wan=forwarding
-            uci -q set firewall.lan_to_wan.src=lan
-            uci -q set firewall.lan_to_wan.dest=wan
-          fi
-
-          uci -q commit network
-          uci -q commit firewall
-          exit 0
-          EOF
-          chmod 755 files/etc/uci-defaults/97-configure-wwan
-          sh -n files/etc/uci-defaults/97-configure-wwan
 
           # Keep only the 19.07.9 feeds needed by this build.
           mkdir -p files/etc/opkg
