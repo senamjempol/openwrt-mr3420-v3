@@ -355,7 +355,7 @@ jobs:
 
           # Detect the internal MR3420 radio by its known hardware path.
           # Do not assume radio0 is internal: USB enumeration can change numbering.
-          radios="$(uci -q show wireless | sed -n 's/^wireless\\.\\([^.=]*\\)=wifi-device$/\\1/p')"
+          radios="$(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p')"
           internal_radio=""
           usb_radio=""
           for radio in $radios; do
@@ -372,7 +372,7 @@ jobs:
 
             # Find an AP interface already attached to the internal radio.
             internal_iface=""
-            ifaces="$(uci -q show wireless | sed -n 's/^wireless\\.\\([^=]*\\)=wifi-iface$/\\1/p')"
+            ifaces="$(uci -q show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p')"
             for iface in $ifaces; do
               iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
               if [ "$iface_device" = "$internal_radio" ]; then
@@ -431,7 +431,7 @@ jobs:
 
           # Add wwan to the existing WAN firewall zone, preserving Ethernet WAN.
           wan_zone=""
-          zones="$(uci -q show firewall | sed -n 's/^firewall\\.\\([^.=]*\\)=zone$/\\1/p')"
+          zones="$(uci -q show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p')"
           for zone in $zones; do
             zone_name="$(uci -q get "firewall.$zone.name" 2>/dev/null)"
             if [ "$zone_name" = "wan" ]; then
@@ -455,7 +455,7 @@ jobs:
 
           # Ensure LAN is allowed to forward through the WAN zone.
           has_lan_wan_forward=0
-          forwards="$(uci -q show firewall | sed -n 's/^firewall\\.\\([^.=]*\\)=forwarding$/\\1/p')"
+          forwards="$(uci -q show firewall | sed -n 's/^firewall\.\([^.=]*\)=forwarding$/\1/p')"
           for forward in $forwards; do
             src="$(uci -q get "firewall.$forward.src" 2>/dev/null)"
             dest="$(uci -q get "firewall.$forward.dest" 2>/dev/null)"
