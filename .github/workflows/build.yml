@@ -421,6 +421,62 @@ jobs:
           EOF
           chmod 755 files/etc/uci-defaults/96-disable-opennds
 
+          
+          # Prepare Wi-Fi client uplink so an internal-radio STA can route internet to LAN.
+          # The STA interface must be assigned to network 'wwan' when configured in LuCI.
+          cat > files/etc/uci-defaults/97-configure-wwan <<'EOF'
+          # DHCP client for the upstream Wi-Fi network.
+          uci -q set network.wwan=interface
+          uci -q set network.wwan.proto=dhcp
+
+          # Add wwan to the existing WAN firewall zone, preserving Ethernet WAN.
+          wan_zone=""
+          zones="$(uci -q show firewall | sed -n 's/^firewall\\.\\([^.=]*\\)=zone$/\\1/p')"
+          for zone in $zones; do
+            zone_name="$(uci -q get "firewall.$zone.name" 2>/dev/null)"
+            if [ "$zone_name" = "wan" ]; then
+              wan_zone="$zone"
+              break
+            fi
+          done
+
+          if [ -n "$wan_zone" ]; then
+            has_wwan=0
+            for net in $(uci -q get "firewall.$wan_zone.network" 2>/dev/null); do
+              [ "$net" = "wwan" ] && has_wwan=1
+            done
+            # UCI list options may be returned as multiple values; check the full config too.
+            if ! uci -q show firewall | grep -F "firewall.$wan_zone.network='wwan'" >/dev/null; then
+              uci -q add_list "firewall.$wan_zone.network=wwan"
+            fi
+            uci -q set "firewall.$wan_zone.masq=1"
+            uci -q set "firewall.$wan_zone.mtu_fix=1"
+          fi
+
+          # Ensure LAN is allowed to forward through the WAN zone.
+          has_lan_wan_forward=0
+          forwards="$(uci -q show firewall | sed -n 's/^firewall\\.\\([^.=]*\\)=forwarding$/\\1/p')"
+          for forward in $forwards; do
+            src="$(uci -q get "firewall.$forward.src" 2>/dev/null)"
+            dest="$(uci -q get "firewall.$forward.dest" 2>/dev/null)"
+            if [ "$src" = "lan" ] && [ "$dest" = "wan" ]; then
+              has_lan_wan_forward=1
+              break
+            fi
+          done
+          if [ "$has_lan_wan_forward" -eq 0 ]; then
+            uci -q set firewall.lan_to_wan=forwarding
+            uci -q set firewall.lan_to_wan.src=lan
+            uci -q set firewall.lan_to_wan.dest=wan
+          fi
+
+          uci -q commit network
+          uci -q commit firewall
+          exit 0
+          EOF
+          chmod 755 files/etc/uci-defaults/97-configure-wwan
+          sh -n files/etc/uci-defaults/97-configure-wwan
+
           # Keep only the 19.07.9 feeds needed by this build.
           mkdir -p files/etc/opkg
           cat > files/etc/opkg/distfeeds.conf <<'EOF'
