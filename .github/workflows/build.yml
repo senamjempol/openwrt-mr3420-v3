@@ -350,23 +350,50 @@ jobs:
           EOF
 
           cat > files/etc/uci-defaults/99-default-settings <<'EOF'
-          # Generate wireless config if it does not exist yet.
+          # Generate wireless config only when one does not already exist.
           [ -s /etc/config/wireless ] || /sbin/wifi config
 
-          # Enable the radio.
+          # Enable detected radios; keep radio0 (the internal Wi-Fi) enabled.
           for radio in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
             uci -q set "wireless.$radio.disabled=0"
           done
+          uci -q set wireless.radio0.disabled='0' 2>/dev/null || true
 
-          # Keep the existing/default AP enabled.
-          if uci -q get wireless.@wifi-iface[0].ssid >/dev/null 2>&1; then
-            uci -q set wireless.@wifi-iface[0].disabled='0'
+          # Enable the existing AP interface(s) assigned to the internal radio.
+          for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p' | sort -r); do
+            device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
+            if [ "$device" = "radio0" ]; then
+              uci -q set "wireless.$iface.disabled=0"
+            fi
+          done
+
+          # Detect a connected MT7601U USB Wi-Fi adapter through its kernel driver.
+          mt7601u_present=0
+          for phy in /sys/class/ieee80211/phy*; do
+            [ -e "$phy/device/driver" ] || continue
+            driver="$(basename "$(readlink -f "$phy/device/driver" 2>/dev/null)")"
+            if [ "$driver" = "mt7601u" ]; then
+              mt7601u_present=1
+              break
+            fi
+          done
+
+          # If the USB adapter is present, retain radio1 but remove its AP interface(s).
+          # This prevents firstboot from creating/broadcasting an SSID on the USB radio.
+          if [ "$mt7601u_present" -eq 1 ] && uci -q get wireless.radio1 >/dev/null 2>&1; then
+            for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p' | sort -r); do
+              device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
+              if [ "$device" = "radio1" ]; then
+                uci -q delete "wireless.$iface"
+              fi
+            done
           fi
 
           uci -q commit wireless
           exit 0
           EOF
           chmod 755 files/etc/uci-defaults/99-default-settings
+          sh -n files/etc/uci-defaults/99-default-settings
 
           # Leave the package's default OpenNDS configuration untouched.
           # Only stop the service and disable startup; OpenNDS defaults to br-lan.
