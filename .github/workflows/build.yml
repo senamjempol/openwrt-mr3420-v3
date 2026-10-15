@@ -353,14 +353,6 @@ jobs:
           # Generate wireless config if it does not exist yet.
           [ -s /etc/config/wireless ] || /sbin/wifi config
 
-          # Default LAN address.
-          uci -q set network.lan.proto='static'
-          uci -q set network.lan.ipaddr='192.168.1.1'
-          uci -q set network.lan.netmask='255.255.255.0'
-          uci -q delete network.lan.gateway
-          uci -q delete network.lan.dns
-          uci -q commit network
-
           # Enable the radio.
           for radio in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
             uci -q set "wireless.$radio.disabled=0"
