@@ -353,59 +353,59 @@ jobs:
           # Generate wireless config only when one does not already exist.
           [ -s /etc/config/wireless ] || /sbin/wifi config
 
-          # Identify radios by hardware path, not radio0/radio1 numbering.
-          radios="$(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p')"
-          usb_radio=""
+          # Detect the internal MR3420 radio by its known hardware path.
+          # Do not assume radio0 is internal: USB enumeration can change numbering.
+          radios="$(uci -q show wireless | sed -n 's/^wireless\\.\\([^.=]*\\)=wifi-device$/\\1/p')"
           internal_radio=""
+          usb_radio=""
           for radio in $radios; do
             radio_path="$(uci -q get "wireless.$radio.path" 2>/dev/null)"
             case "$radio_path" in
-              *usb*|*USB*) usb_radio="$radio" ;;
-              *) if [ -z "$internal_radio" ]; then internal_radio="$radio"; fi ;;
+              *18100000.wmac*) internal_radio="$radio" ;;
+              *1b000000.usb*|*/usb*) usb_radio="$radio" ;;
             esac
           done
 
-          # Keep all detected radios available; the internal radio must be enabled.
-          for radio in $radios; do
-            uci -q set "wireless.$radio.disabled=0"
-          done
+          # If the expected internal hardware path is not present, do not guess.
           if [ -n "$internal_radio" ]; then
             uci -q set "wireless.$internal_radio.disabled=0"
-          fi
 
-          # Never attach an AP/SSID to the USB radio.
-          # If the default "OpenWrt" AP was assigned to USB due to enumeration order,
-          # move that interface to the internal radio so its SSID/configuration is preserved.
-          if [ -n "$usb_radio" ] && [ -n "$internal_radio" ]; then
-            internal_has_iface=0
-            ifaces="$(uci -q show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p')"
+            # Find an AP interface already attached to the internal radio.
+            internal_iface=""
+            ifaces="$(uci -q show wireless | sed -n 's/^wireless\\.\\([^=]*\\)=wifi-iface$/\\1/p')"
             for iface in $ifaces; do
               iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
               if [ "$iface_device" = "$internal_radio" ]; then
-                internal_has_iface=1
+                internal_iface="$iface"
                 break
               fi
             done
 
-            moved_iface=0
-            for iface in $ifaces; do
-              iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
-              if [ "$iface_device" = "$usb_radio" ]; then
-                if [ "$internal_has_iface" -eq 0 ] && [ "$moved_iface" -eq 0 ]; then
-                  uci -q set "wireless.$iface.device=$internal_radio"
-                  uci -q set "wireless.$iface.disabled=0"
-                  moved_iface=1
-                  internal_has_iface=1
-                else
+            # Create the default AP on the internal radio if none exists.
+            if [ -z "$internal_iface" ]; then
+              internal_iface="default_internal"
+              uci -q set "wireless.$internal_iface=wifi-iface"
+              uci -q set "wireless.$internal_iface.device=$internal_radio"
+              uci -q set "wireless.$internal_iface.network=lan"
+              uci -q set "wireless.$internal_iface.mode=ap"
+              uci -q set "wireless.$internal_iface.ssid=OpenWrt"
+              uci -q set "wireless.$internal_iface.encryption=none"
+            fi
+            uci -q set "wireless.$internal_iface.disabled=0"
+
+            # Remove any AP interface attached to USB; keep its radio and driver.
+            if [ -n "$usb_radio" ]; then
+              for iface in $ifaces; do
+                iface_device="$(uci -q get "wireless.$iface.device" 2>/dev/null)"
+                if [ "$iface_device" = "$usb_radio" ]; then
                   uci -q delete "wireless.$iface"
                 fi
-              elif [ "$iface_device" = "$internal_radio" ]; then
-                uci -q set "wireless.$iface.disabled=0"
-              fi
-            done
+              done
+            fi
           fi
 
           uci -q commit wireless
+          exit 0
           exit 0
           EOF
           chmod 755 files/etc/uci-defaults/99-default-settings
